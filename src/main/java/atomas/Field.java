@@ -1,9 +1,13 @@
 package atomas;
 
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import net.jcip.annotations.Immutable;
 import net.jcip.annotations.NotThreadSafe;
@@ -11,6 +15,8 @@ import net.jcip.annotations.NotThreadSafe;
 import static atomas.PeriodicTable.DARK_PLUS;
 import static atomas.PeriodicTable.PLUS;
 import static atomas.PeriodicTable.atom;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 
 /**
  * The game board: a ring containing 1 to 18 {@link IAtom}s. The addition of a 19th atom which does not cause a
@@ -27,22 +33,33 @@ import static atomas.PeriodicTable.atom;
 @NotThreadSafe
 public final class Field {
     /**
+     * @see #hashCode()
+     */
+    private static final Function<IAtom, Integer> ATOM_TO_INT = atom -> {
+        if (atom instanceof Atom) {
+            return ((Atom) atom).getAtomicNumber();
+        } else if (atom == PLUS) {
+            return -1;
+        } else {
+            return -2;
+        }
+    };
+
+    /**
      * Internal representation of the atoms on the board.
      */
     private final List<IAtom> mContents = new LinkedList<>();
 
     /**
-     * @see #Field(List, IFieldListener)
+     * @see IFieldListener
      */
-    private final IFieldListener mListener;
+    private final List<IFieldListener> mListeners = new LinkedList<>();
 
     /**
      * @param initialContents the initial set of contents
-     * @param listener a listener to notify of changes to the field // FIXME: WHY NOT USUAL ADD LISTENER?
      * @throws IllegalArgumentException if the list is {@code null}, empty, or contains {@code null}
-     * @throws IllegalArgumentException if the listener is {@code null}
      */
-    public Field(final List<IAtom> initialContents, final IFieldListener listener) {
+    public Field(final List<Atom> initialContents) {
         if (initialContents == null) {
             throw new IllegalArgumentException("initialContents == null");
         }
@@ -52,12 +69,22 @@ public final class Field {
         if (initialContents.contains(null)) {
             throw new IllegalArgumentException("initialContents contains null");
         }
+
+        mContents.addAll(initialContents);
+    }
+
+    /**
+     * @param listener the listener to add if not already present
+     * @throws IllegalArgumentException if the argument is {@code null}
+     */
+    public void addListener(final IFieldListener listener) {
         if (listener == null) {
             throw new IllegalArgumentException("listener == null");
         }
 
-        mContents.addAll(initialContents);
-        mListener = listener;
+        if (!mListeners.contains(listener)) {
+            mListeners.add(listener);
+        }
     }
 
     /**
@@ -70,7 +97,8 @@ public final class Field {
     @Override
     public boolean equals(final Object other) {
         if (other instanceof Field) {
-            return mContents.equals(((Field) other).mContents);
+            // Fields A = (1 2 1 3) and B = (3 1 2 1) are identical, i.e., the index doesn't matter but order does.
+            return rotations().contains(((Field) other).mContents);
         }
 
         return false;
@@ -78,7 +106,16 @@ public final class Field {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mContents);
+        /*
+         * Not a great hash, but one consistent with equals(). If this field, A, is the rotation of field B, then
+         * sorting A and B will have the same result. That means that if A.equals(B), A.hashCode() == B.hashCode().
+         * However, many non-equals() fields will have the same hashCode().
+         *
+         * With A = (1 2 1 3) and B = (3 1 2 1), A.equals(B) because B is just a rotation of A. Sorting A or B yields
+         * (1 1 2 3), so A.hashCode() == B.hashCode(). However, for C = (2 3 1 1), !A.equals(C), but A.hashCode() ==
+         * C.hashCode(), since C's sort is also (1 1 2 3).
+         */
+        return mContents.stream().map(ATOM_TO_INT).sorted().collect(toList()).hashCode();
     }
 
     /**
@@ -93,7 +130,7 @@ public final class Field {
         }
 
         mContents.add(index, atom);
-        mListener.insert(index, atom);
+        mListeners.forEach(listener -> listener.insert(index, atom));
 
         final ReactionContext context = new ReactionContext(index);
 
@@ -124,7 +161,7 @@ public final class Field {
      */
     public void remove(final int index) {
         if (count() == 1) {
-            throw new IllegalStateException("The field must contain at least one atom");
+            throw new IllegalStateException("The field must not become empty");
         }
 
         /*
@@ -133,7 +170,7 @@ public final class Field {
          */
 
         mContents.remove(index);
-        mListener.remove(index);
+        mListeners.forEach(listener -> listener.remove(index));
 
         final ReactionContext context = new ReactionContext(index == count() ? index - 1 : index);
 
@@ -144,9 +181,122 @@ public final class Field {
         reactAtAdjacentPlus(context);
     }
 
+    /**
+     * @param listener the listener to remove if present
+     * @throws IllegalArgumentException if the argument is {@code null}
+     */
+    public void removeListener(final IFieldListener listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("listener == null");
+        }
+
+        mListeners.remove(listener);
+    }
+
     @Override
     public String toString() {
         return mContents.stream().map(IAtom::toString).collect(Collectors.joining(" "));
+    }
+
+    /**
+     * Updates the {@link Field} for a reaction using this context, notifying listeners.
+     *
+     * @param context the context in which a reaction occurred (must not be {@code null})
+     * @param result the result of the reaction (must not be {@code null})
+     * @return a new context for any subsequent reactions (never {@code null})
+     */
+    private ReactionContext adjustField(final ReactionContext context, final Atom result) {
+        assert context != null;
+        assert result != null;
+
+        /*
+         * The result goes in the center index, but two indices are removed; if those were below the center index,
+         * it gets shifted counterclockwise.
+         */
+        final int resultIndex =
+            context.getCenterIndex()
+                - (context.getCounterclockwiseIndex() < context.getCenterIndex() ? 1 : 0)
+                - (context.getClockwiseIndex() < context.getCenterIndex() ? 1 : 0);
+
+        mContents.remove(Math.max(context.getCounterclockwiseIndex(), context.getClockwiseIndex()));
+        mContents.remove(Math.min(context.getCounterclockwiseIndex(), context.getClockwiseIndex()));
+        mContents.set(resultIndex, result);
+
+        mListeners.forEach(listener ->
+            listener.react(
+                context.getCounterclockwiseIndex(),
+                context.getCenterIndex(),
+                context.getClockwiseIndex(),
+                result,
+                resultIndex));
+
+        return new ReactionContext(resultIndex);
+    }
+
+    /**
+     * The core algorithm: collapse atoms together whenever a supplied reaction applies, calculating a
+     * reaction-dependent result. If the reaction does not apply, this does nothing.
+     *
+     * @param context the context that specifies where the reaction occurs (must not be {@code null})
+     * @param reaction the reaction that might apply to that context (must not be {@code null})
+     */
+    private void react(final ReactionContext context, final IReaction reaction) {
+        assert context != null;
+        assert reaction != null;
+
+        ReactionContext loopContext = context;
+        IReaction loopReaction = reaction;
+        while (loopContext.getCounterclockwiseIndex() != loopContext.getClockwiseIndex()
+            && loopReaction.isApplicable(loopContext)) {
+
+            final Atom result = loopReaction.react(
+                loopContext.getCounterclockwiseAtom(),
+                loopContext.getCenterAtom(),
+                loopContext.getClockwiseAtom());
+
+            loopContext = adjustField(loopContext, result);
+
+            // After the initial reaction, it's *must* be a plus-style reaction, though it may be inapplicable now.
+            loopReaction = new PlusReaction();
+        }
+    }
+
+    /**
+     * Potentially starts a reaction, if a {@linkplain PeriodicTable#PLUS plus} is next to the center atom of the given
+     * context (and of course if the {@link PlusReaction} is otherwise applicable). The counterclockwise direction is
+     * preferred.
+     *
+     * <p>
+     * Recursive.
+     * </p>
+     *
+     * @param context the context in which to operate (must not be {@code null})
+     */
+    private void reactAtAdjacentPlus(final ReactionContext context) {
+        assert context != null;
+
+        if (context.getCounterclockwiseAtom() == PLUS) {
+            react(new ReactionContext(context.getCounterclockwiseIndex()), new PlusReaction());
+            reactAtAdjacentPlus(context);
+        } else if (context.getClockwiseAtom() == PLUS) {
+            react(new ReactionContext(context.getClockwiseIndex()), new PlusReaction());
+            reactAtAdjacentPlus(context);
+        }
+    }
+
+    /**
+     * For <i>n</i> atoms, there are <i>n</i> possible rotations.
+     *
+     * @return all possible rotations of this field (never {@code null} and will not contain {@code null})
+     */
+    private Set<List<IAtom>> rotations() {
+        final IntFunction<List<IAtom>> rotate = distance -> {
+            final List<IAtom> copy = new LinkedList<>(mContents);
+            Collections.rotate(copy, distance);
+            return copy;
+        };
+
+        return IntStream.range(0, count()).mapToObj(rotate).collect(toSet());
     }
 
     /**
@@ -265,91 +415,6 @@ public final class Field {
                  * fusion merge faster and eliminating +2 reactions.
                  */
             }
-        }
-    }
-
-    /**
-     * Updates the {@link Field} for a reaction using this context, notifying listeners.
-     *
-     * @param context the context in which a reaction occurred (must not be {@code null})
-     * @param result the result of the reaction (must not be {@code null})
-     * @return a new context for any subsequent reactions (never {@code null})
-     */
-    private ReactionContext adjustField(final ReactionContext context, final Atom result) {
-        assert context != null;
-        assert result != null;
-
-        /*
-         * The result goes in the center index, but two indices are removed; if those were below the center index,
-         * it gets shifted counterclockwise.
-         */
-        final int resultIndex =
-            context.getCenterIndex()
-                - (context.getCounterclockwiseIndex() < context.getCenterIndex() ? 1 : 0)
-                - (context.getClockwiseIndex() < context.getCenterIndex() ? 1 : 0);
-
-        mContents.remove(Math.max(context.getCounterclockwiseIndex(), context.getClockwiseIndex()));
-        mContents.remove(Math.min(context.getCounterclockwiseIndex(), context.getClockwiseIndex()));
-        mContents.set(resultIndex, result);
-
-        mListener.react(
-            context.getCounterclockwiseIndex(),
-            context.getCenterIndex(),
-            context.getClockwiseIndex(),
-            result,
-            resultIndex);
-
-        return new ReactionContext(resultIndex);
-    }
-
-    /**
-     * The core algorithm: collapse atoms together whenever a supplied reaction applies, calculating a
-     * reaction-dependent result. If the reaction does not apply, this does nothing.
-     *
-     * @param context the context that specifies where the reaction occurs (must not be {@code null})
-     * @param reaction the reaction that might apply to that context (must not be {@code null})
-     */
-    private void react(final ReactionContext context, final IReaction reaction) {
-        assert context != null;
-        assert reaction != null;
-
-        ReactionContext loopContext = context;
-        IReaction loopReaction = reaction;
-        while (loopContext.getCounterclockwiseIndex() != loopContext.getClockwiseIndex()
-            && loopReaction.isApplicable(loopContext)) {
-
-            final Atom result = loopReaction.react(
-                loopContext.getCounterclockwiseAtom(),
-                loopContext.getCenterAtom(),
-                loopContext.getClockwiseAtom());
-
-            loopContext = adjustField(loopContext, result);
-
-            // After the initial reaction, it's *must* be a plus-style reaction, though it may be inapplicable now.
-            loopReaction = new PlusReaction();
-        }
-    }
-
-    /**
-     * Potentially starts a reaction, if a {@linkplain PeriodicTable#PLUS plus} is next to the center atom of the given
-     * context (and of course if the {@link PlusReaction} is otherwise applicable). The counterclockwise direction is
-     * preferred.
-     *
-     * <p>
-     * Recursive.
-     * </p>
-     *
-     * @param context the context in which to operate (must not be {@code null})
-     */
-    private void reactAtAdjacentPlus(final ReactionContext context) {
-        assert context != null;
-
-        if (context.getCounterclockwiseAtom() == PLUS) {
-            react(new ReactionContext(context.getCounterclockwiseIndex()), new PlusReaction());
-            reactAtAdjacentPlus(context);
-        } else if (context.getClockwiseAtom() == PLUS) {
-            react(new ReactionContext(context.getClockwiseIndex()), new PlusReaction());
-            reactAtAdjacentPlus(context);
         }
     }
 

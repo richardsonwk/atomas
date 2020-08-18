@@ -1,7 +1,7 @@
 package atomas;
 
 /**
- * Listener for changes to the {@link Field}.
+ * Listener for changes to the {@link Field}. <strong>Must not throw.</strong>
  */
 public interface IFieldListener {
     /**

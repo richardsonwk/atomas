@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -67,6 +68,13 @@ public final class PeriodicTable {
         }
 
         return LazySingletonInitializer.INSTANCE.mAtoms.get(atomicNumber - 1);
+    }
+
+    /**
+     * @return the atom with the largest atomic number in the periodic table (never {@code null})
+     */
+    public static Atom max() {
+        return LazySingletonInitializer.INSTANCE.mAtoms.stream().max(Comparator.comparing(Atom::getAtomicNumber)).get();
     }
 
     /**

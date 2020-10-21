@@ -131,7 +131,37 @@ public class FieldTest {
 
     @Test
     public void testInsertAtom() {
-        // FIXME IMPLEMENT, INCLUDING INSERT NEXT TO A PLUS THAT SHOULD THEN WORK (CCW AND CW)
+        final Field field = field(1, 3);
+
+        // Insert among other atoms
+        field.insert(atom(2), 1);
+        Assert.assertEquals(field(1, 2, 3), field);
+
+        // Insert counterclockwise from existing plus
+        {
+            field.insert(PLUS, 1); // 1 + 2 3
+
+            // Plus is clockwise from inserted atom: 1 2 (new) + 2 (old) 3
+            field.insert(atom(2), 1);
+
+            Assert.assertEquals(field(1, 3, 3), field);
+        }
+
+        // Insert clockwise from existing plus
+        {
+            // 1 + 3 3
+            field.insert(PLUS, 1);
+
+            // Plus is counterclockwise from inserted atom: 1 (old) + 1 (new) 3 3
+            field.insert(atom(1), 2);
+
+            Assert.assertEquals(field(5), field);
+        }
+
+        // No effect because there's only one atom in the field.
+        field.insert(DARK_PLUS, 1);
+
+        // FIXME: SO INSERT NEXT TO THAT, ANY ATOM AT ALL. ALSO INSERT BY PLUS WHERE THE PLUS HAS NO EFFECT.
     }
 
     @Test(expected = IndexOutOfBoundsException.class)
@@ -185,7 +215,12 @@ public class FieldTest {
 
     @Test
     public void testRemove() {
-        // FIXME IMPLEMENT, INCLUDING CASE WHERE REMOVAL CAUSES A PLUS TO WORK (CCW AND CW)
+        final Field field = field(1, 2, 3);
+
+        field.remove(1);
+        Assert.assertEquals(field(1, 3), field);
+
+        // FIXME INCLUDE CASE WHERE REMOVAL CAUSES A PLUS TO WORK (CCW AND CW)
     }
 
     @Test(expected = IndexOutOfBoundsException.class)

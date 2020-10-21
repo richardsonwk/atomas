@@ -132,7 +132,7 @@ public final class Field {
         mContents.add(index, atom);
         mListeners.forEach(listener -> listener.insert(index, atom));
 
-        final ReactionContext context = new ReactionContext(index);
+        ReactionContext context = new ReactionContext(index);
 
         /*
          * We must deal with any dark plus first. At most one dark plus can exist in the field and only if there's
@@ -142,13 +142,13 @@ public final class Field {
          * unlikely (even impossible?) anyone has ever seen two at once anyway.
          */
         if (atom == DARK_PLUS) {
-            react(context, new DarkPlusReaction());
+            context = react(context, DarkPlusReaction.INSTANCE);
         } else if (context.getCounterclockwiseAtom() == DARK_PLUS) {
-            react(new ReactionContext(context.getCounterclockwiseIndex()), new DarkPlusReaction());
+            context = react(new ReactionContext(context.getCounterclockwiseIndex()), DarkPlusReaction.INSTANCE);
         } else if (context.getClockwiseAtom() == DARK_PLUS) {
-            react(new ReactionContext(context.getClockwiseIndex()), new DarkPlusReaction());
+            context = react(new ReactionContext(context.getClockwiseIndex()), DarkPlusReaction.INSTANCE);
         } else if (atom == PLUS) {
-            react(context, new PlusReaction());
+            context = react(context, PlusReaction.INSTANCE);
         }
 
         reactAtAdjacentPlus(context);
@@ -172,10 +172,10 @@ public final class Field {
         mContents.remove(index);
         mListeners.forEach(listener -> listener.remove(index));
 
-        final ReactionContext context = new ReactionContext(index == count() ? index - 1 : index);
+        ReactionContext context = new ReactionContext(index == count() ? index - 1 : index);
 
         if (context.getCenterAtom() == PLUS) {
-            react(context, new PlusReaction());
+            context = react(context, PlusReaction.INSTANCE);
         }
 
         reactAtAdjacentPlus(context);
@@ -239,8 +239,9 @@ public final class Field {
      *
      * @param context the context that specifies where the reaction occurs (must not be {@code null})
      * @param reaction the reaction that might apply to that context (must not be {@code null})
+     * @return the last context used (never {@code null})
      */
-    private void react(final ReactionContext context, final IReaction reaction) {
+    private ReactionContext react(final ReactionContext context, final IReaction reaction) {
         assert context != null;
         assert reaction != null;
 
@@ -257,8 +258,10 @@ public final class Field {
             loopContext = adjustField(loopContext, result);
 
             // After the initial reaction, it's *must* be a plus-style reaction, though it may be inapplicable now.
-            loopReaction = new PlusReaction();
+            loopReaction = PlusReaction.INSTANCE;
         }
+
+        return loopContext;
     }
 
     /**
@@ -276,11 +279,9 @@ public final class Field {
         assert context != null;
 
         if (context.getCounterclockwiseAtom() == PLUS) {
-            react(new ReactionContext(context.getCounterclockwiseIndex()), new PlusReaction());
-            reactAtAdjacentPlus(context);
+            reactAtAdjacentPlus(react(new ReactionContext(context.getCounterclockwiseIndex()), PlusReaction.INSTANCE));
         } else if (context.getClockwiseAtom() == PLUS) {
-            react(new ReactionContext(context.getClockwiseIndex()), new PlusReaction());
-            reactAtAdjacentPlus(context);
+            reactAtAdjacentPlus(react(new ReactionContext(context.getClockwiseIndex()), PlusReaction.INSTANCE));
         }
     }
 
@@ -305,9 +306,14 @@ public final class Field {
     @Immutable
     private static class DarkPlusReaction implements IReaction {
         /**
-         * @see DarkPlusReaction
+         * A single instance is sufficient.
          */
-        public DarkPlusReaction() {
+        public static final DarkPlusReaction INSTANCE = new DarkPlusReaction();
+
+        /**
+         * Private constructor to "require" use of {@link #INSTANCE}.
+         */
+        private DarkPlusReaction() {
             // Nothing to do.
         }
 
@@ -369,9 +375,14 @@ public final class Field {
     @Immutable
     private static class PlusReaction implements IReaction {
         /**
-         * @see PlusReaction
+         * A single instance is sufficient.
          */
-        public PlusReaction() {
+        public static final PlusReaction INSTANCE = new PlusReaction();
+
+        /**
+         * Private constructor to "require" use of {@link #INSTANCE}.
+         */
+        private PlusReaction() {
             // Nothing to do.
         }
 
